@@ -1,0 +1,250 @@
+[
+    {
+        "id": "14f2a19540a3c0f9",
+        "type": "tab",
+        "label": "Predict ANN",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "670d03ee6b47edb5",
+        "type": "debug",
+        "z": "14f2a19540a3c0f9",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 440,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "ab4e4cb1240fc79f",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "name": "structured json",
+        "func": "let data = (typeof msg.payload === \"string\") ? JSON.parse(msg.payload) : msg.payload;\n\nlet temp = data.object?.Sensor_Temp || 0;\nlet soil = data.object?.Sensor_Soil || 0;\nlet ec = data.object?.Sensor_EC || 0;\nlet bat = data.object?.BatV || 0;\n\nmsg.payload = {\n  \"soil_moisture\":soil,\n  \"soil_temp\":temp,\n  \"soil_ec\":ec\n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 260,
+        "y": 200,
+        "wires": [
+            [
+                "670d03ee6b47edb5",
+                "687c8ab20a4ccf53"
+            ]
+        ]
+    },
+    {
+        "id": "88cf8ac781165050",
+        "type": "mqtt in",
+        "z": "14f2a19540a3c0f9",
+        "name": "WLNODE",
+        "topic": "application/9e508ed7-c91b-430b-89be-9a496c51c870/device/a840413ecd5c6650/event/up",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "1af37f0f852dec1b",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 60,
+        "y": 200,
+        "wires": [
+            [
+                "ab4e4cb1240fc79f"
+            ]
+        ]
+    },
+    {
+        "id": "05ca54a327a21a71",
+        "type": "GSheet",
+        "z": "14f2a19540a3c0f9",
+        "creds": "8194e0537e0e5e1d",
+        "method": "update",
+        "action": "",
+        "sheet": "1Hsgc0irDWzrytJjcPKQmUk5ucOWreNbMCnjRbhum4kc",
+        "cells": "Sheet1!N3:P3",
+        "flatten": false,
+        "name": "",
+        "x": 490,
+        "y": 300,
+        "wires": [
+            [
+                "f8674fead319dca2"
+            ]
+        ]
+    },
+    {
+        "id": "f8674fead319dca2",
+        "type": "GSheet",
+        "z": "14f2a19540a3c0f9",
+        "creds": "8194e0537e0e5e1d",
+        "method": "get",
+        "action": "",
+        "sheet": "1Hsgc0irDWzrytJjcPKQmUk5ucOWreNbMCnjRbhum4kc",
+        "cells": "Sheet1!N3:R3",
+        "flatten": false,
+        "name": "",
+        "x": 470,
+        "y": 360,
+        "wires": [
+            [
+                "5ca7ebfc97a05f6d"
+            ]
+        ]
+    },
+    {
+        "id": "687c8ab20a4ccf53",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "name": "json to array",
+        "func": "let data = msg.payload;  // asumsikan JSON masuk di msg.payload\nmsg.payload = [\n  data.soil_moisture,\n  data.soil_temp,\n  data.soil_ec\n];\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 470,
+        "y": 200,
+        "wires": [
+            [
+                "05ca54a327a21a71",
+                "0e315c002929e8c7"
+            ]
+        ]
+    },
+    {
+        "id": "fc9f313e4d894e46",
+        "type": "mqtt out",
+        "z": "14f2a19540a3c0f9",
+        "name": "",
+        "topic": "/ann/predict",
+        "qos": "2",
+        "retain": "true",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "512d9527851bf091",
+        "x": 490,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "5ca7ebfc97a05f6d",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "name": "array to json",
+        "func": "let data = msg.payload[0];  // asumsikan dataay masuk di msg.payload\n\nmsg.payload = {\n  soil_moisture: parseFloat(data[0]),\n  soil_temp: parseFloat(data[1]),\n  soil_ec: parseFloat(data[2]),\n  emisi_ch4: parseFloat(data[3]),\n  emisi_n20: parseFloat(data[4])\n};\n\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 470,
+        "y": 420,
+        "wires": [
+            [
+                "fc9f313e4d894e46",
+                "0e315c002929e8c7"
+            ]
+        ]
+    },
+    {
+        "id": "0e315c002929e8c7",
+        "type": "debug",
+        "z": "14f2a19540a3c0f9",
+        "name": "debug 2",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 760,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "1af37f0f852dec1b",
+        "type": "mqtt-broker",
+        "name": "",
+        "broker": "0.0.0.0",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "8194e0537e0e5e1d",
+        "type": "gauth",
+        "name": "node-red@ann-predictor.iam.gserviceaccount.com"
+    },
+    {
+        "id": "512d9527851bf091",
+        "type": "mqtt-broker",
+        "name": "kendali-irigasi",
+        "broker": "kendali-irigasi.com",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]

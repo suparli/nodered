@@ -1,0 +1,221 @@
+[
+    {
+        "id": "31618d27828dae08",
+        "type": "tab",
+        "label": "LoRaWAN ",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "929dfc9ab14bf665",
+        "type": "mqtt in",
+        "z": "31618d27828dae08",
+        "name": "WLNODE",
+        "topic": "application/9e508ed7-c91b-430b-89be-9a496c51c870/device/+/event/up",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "1af37f0f852dec1b",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 100,
+        "y": 220,
+        "wires": [
+            [
+                "630149b4399d2363",
+                "930609bcafdda652"
+            ]
+        ]
+    },
+    {
+        "id": "7ee72e0885031f29",
+        "type": "file",
+        "z": "31618d27828dae08",
+        "name": "Save CSV Via USB DISK",
+        "filename": "filename",
+        "filenameType": "msg",
+        "appendNewline": false,
+        "createDir": false,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 550,
+        "y": 180,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "630149b4399d2363",
+        "type": "function",
+        "z": "31618d27828dae08",
+        "name": "Convert Data",
+        "func": "let data = (typeof msg.payload === \"string\") ? JSON.parse(msg.payload) : msg.payload;\n\nlet time = data.time || \"\";\nlet deviceName = data.deviceInfo?.deviceName || \"unknown_device\";\nlet deviceType = data.deviceInfo?.deviceProfileName || \"unknown_type\";\n\nlet csvLine = \"\";\n\nif (deviceType === \"WL\") {\n    let temp = data.object?.Sensor_Temp || \"\";\n    let wl = data.object?.Sensor_WL || \"\";\n    let bat = data.object?.BatV || \"\";\n    let exti = data.object?.EXTI_Trigger || \"\";\n    csvLine = `${time},${deviceName},${temp},${wl},${bat},${exti}\\n`;\n}\nelse if (deviceType === \"SOIL\") {\n    let temp = data.object?.Sensor_Temp || \"\";\n    let soil = data.object?.Sensor_Soil || \"\";\n    let ec = data.object?.Sensor_EC || \"\";\n    let bat = data.object?.BatV || \"\";\n    let exti = data.object?.EXTI_Trigger || \"\";\n    csvLine = `${time},${deviceName},${temp},${soil},${ec},${bat},${exti}\\n`;\n}\nelse {\n    csvLine = `${time},${deviceName},Unknown device type: ${deviceType}\\n`;\n}\n\nmsg.payload = csvLine;\nmsg.filename = `/media/usb0/${deviceName}.csv`;  // ganti sesuai OS-mu\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 310,
+        "y": 180,
+        "wires": [
+            [
+                "7ee72e0885031f29"
+            ]
+        ]
+    },
+    {
+        "id": "930609bcafdda652",
+        "type": "function",
+        "z": "31618d27828dae08",
+        "name": "Save Data Sementara",
+        "func": "let data = (typeof msg.payload === \"string\") ? JSON.parse(msg.payload) : msg.payload;\nlet deviceName = data.deviceInfo?.deviceName || \"unknown_device\";\nlet payloadObj = data.object || {};\n\nfor (let key in payloadObj) {\n    let dynamicKey = `${deviceName}_${key}`;  // contoh: WL1_BatV\n    let value = payloadObj[key];\n    \n    flow.set(dynamicKey, value);  // Simpan ke flow memory\n}\n\n// Debug: lihat semua yang disimpan\nmsg.payload = {\n    status: \"Data disimpan dengan key dinamis\",\n    exampleKeys: Object.keys(payloadObj).map(k => `${deviceName}_${k}`)\n};\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 340,
+        "y": 300,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "d98352d669d83c1a",
+        "type": "function",
+        "z": "31618d27828dae08",
+        "name": "Ambil Data Sementara",
+        "func": "// Ambil semua variabel dari flow context\nlet contextKeys = flow.keys(); // array semua key yang disimpan di flow\n\nlet result = {};  // akan menyimpan semua data sensor\n\n// Loop semua key, ambil nilainya\nfor (let key of contextKeys) {\n    let value = flow.get(key);\n    result[key] = value;\n}\n\n// Output ke debug\nmsg.payload = result;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 80,
+        "wires": [
+            [
+                "4864c5ee41822de3"
+            ]
+        ]
+    },
+    {
+        "id": "fab25363c1be02ac",
+        "type": "http request",
+        "z": "31618d27828dae08",
+        "name": "Post to dataonline",
+        "method": "use",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 810,
+        "y": 80,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b2627b288f7a6f83",
+        "type": "function",
+        "z": "31618d27828dae08",
+        "name": "Konfigurasi API",
+        "func": "function encodeForm(obj) {\n    return Object.keys(obj)\n        .map(k => encodeURIComponent(k) + \"=\" + encodeURIComponent(obj[k]))\n        .join(\"&\");\n}\n\nconst data = msg.payload || {};\n\nlet now = new Date();\nlet pad = n => n.toString().padStart(2, '0');\n\nlet datetime = \n    now.getFullYear() + '-' +\n    pad(now.getMonth() + 1) + '-' +\n    pad(now.getDate()) + ' ' +\n    pad(now.getHours()) + ':' +\n    pad(now.getMinutes()) + ':' +\n    pad(now.getSeconds());\n\nconst bodyData = {\n    datetime: datetime,\n    device_id: \"999\",  // Bisa kamu ubah jika perlu spesifik\n    c1: data[\"WL1_Sensor_WL\"] || 0,\n    c2: data[\"WL1_BatV\"] || 0,\n    c3: data[\"WL2_Sensor_WL\"] || 0,\n    c4: data[\"WL2_BatV\"] || 0,\n    c5: data[\"SOIL1_Sensor_Temp\"] || 0,\n    c6: data[\"SOIL1_Sensor_Soil\"] || 0,\n    c7: data[\"SOIL1_Sensor_EC\"] || 0,\n    c8: data[\"SOIL1_BatV\"] || 0,\n    c9: data[\"SOIL2_Sensor_Temp\"] || 0,\n    c10: data[\"SOIL2_Sensor_Soil\"] || 0,\n    c11: data[\"SOIL2_Sensor_EC\"] || 0,\n    c12: data[\"SOIL2_BatV\"] || 0\n};\n\nmsg.method = \"POST\";\nmsg.url = \"https://api.dataonline.co.id/v1/storeData?\"; // ← Ganti dengan URL API kamu\nmsg.headers = {\n    \"api_token\": \"Zk1VeVhrM0hzTUJZM1lFYXFnS3czdm9LMkExNGY5emU=\",  // ← Ganti dengan token kamu\n    \"Content-Type\": \"application/x-www-form-urlencoded\",\n    \"Connection\":\"keep-alive\",\n\n};\nmsg.payload = encodeForm(bodyData);\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 580,
+        "y": 80,
+        "wires": [
+            [
+                "fab25363c1be02ac"
+            ]
+        ]
+    },
+    {
+        "id": "4864c5ee41822de3",
+        "type": "debug",
+        "z": "31618d27828dae08",
+        "name": "debug 3",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 560,
+        "y": 20,
+        "wires": []
+    },
+    {
+        "id": "14f17107defb6077",
+        "type": "inject",
+        "z": "31618d27828dae08",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "1800",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 110,
+        "y": 40,
+        "wires": [
+            [
+                "d98352d669d83c1a"
+            ]
+        ]
+    },
+    {
+        "id": "1af37f0f852dec1b",
+        "type": "mqtt-broker",
+        "name": "",
+        "broker": "0.0.0.0",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]
