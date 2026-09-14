@@ -1,0 +1,111 @@
+[
+  {
+    "id": "cfg",
+    "type": "inject",
+    "name": "Set Konfigurasi",
+    "props": [
+      { "p": "TIME_MS", "v": "5000", "vt": "num" },
+      { "p": "LEVEL_THRESHOLD", "v": "50", "vt": "num" },
+      { "p": "DEBOUNCE_MS", "v": "30000", "vt": "num" }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 0.1,
+    "x": 120,
+    "y": 40,
+    "wires": [["setcfg"]]
+  },
+  {
+    "id": "setcfg",
+    "type": "function",
+    "name": "Simpan ke flow context",
+    "func": "flow.set('TIME_MS', msg.TIME_MS);\nflow.set('LEVEL_THRESHOLD', msg.LEVEL_THRESHOLD);\nflow.set('DEBOUNCE_MS', msg.DEBOUNCE_MS);\nflow.set('lastWarn', 0);\nreturn null;",
+    "x": 340,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "wl_a_in",
+    "type": "mqtt in",
+    "name": "WL A",
+    "topic": "ews/wl/a",
+    "qos": "1",
+    "datatype": "auto",
+    "broker": "broker_mqtt",
+    "x": 120,
+    "y": 140,
+    "wires": [["store_a"]]
+  },
+  {
+    "id": "store_a",
+    "type": "function",
+    "name": "Store & Compare A",
+    "func": "const level = Number(msg.payload.level);\nif (isNaN(level)) { return null; }\n\nflow.set('wl_a', { level, ts: Date.now() });\n\nreturn compareAndWarn();\n\nfunction compareAndWarn() {\n    const a = flow.get('wl_a');\n    const b = flow.get('wl_b');\n    if (!a || !b) return null;\n\n    const timeTol = flow.get('TIME_MS') || 5000;\n    if (Math.abs(a.ts - b.ts) > timeTol) return null;\n\n    const threshold = flow.get('LEVEL_THRESHOLD') || 50;\n    const diff = Math.abs(a.level - b.level);\n    if (diff < threshold) return null;\n\n    const debounce = flow.get('DEBOUNCE_MS') || 30000;\n    const last = flow.get('lastWarn') || 0;\n    if (Date.now() - last < debounce) return null;\n    flow.set('lastWarn', Date.now());\n\n    return { payload: { warning: true, diff, a: a.level, b: b.level, ts: new Date().toISOString() } };\n}",
+    "x": 340,
+    "y": 140,
+    "wires": [["cek_warn"]]
+  },
+  {
+    "id": "wl_b_in",
+    "type": "mqtt in",
+    "name": "WL B",
+    "topic": "ews/wl/b",
+    "qos": "1",
+    "datatype": "auto",
+    "broker": "broker_mqtt",
+    "x": 120,
+    "y": 240,
+    "wires": [["store_b"]]
+  },
+  {
+    "id": "store_b",
+    "type": "function",
+    "name": "Store & Compare B",
+    "func": "const level = Number(msg.payload.level);\nif (isNaN(level)) { return null; }\n\nflow.set('wl_b', { level, ts: Date.now() });\n\nreturn compareAndWarn();\n\nfunction compareAndWarn() {\n    const a = flow.get('wl_a');\n    const b = flow.get('wl_b');\n    if (!a || !b) return null;\n\n    const timeTol = flow.get('TIME_MS') || 5000;\n    if (Math.abs(a.ts - b.ts) > timeTol) return null;\n\n    const threshold = flow.get('LEVEL_THRESHOLD') || 50;\n    const diff = Math.abs(a.level - b.level);\n    if (diff < threshold) return null;\n\n    const debounce = flow.get('DEBOUNCE_MS') || 30000;\n    const last = flow.get('lastWarn') || 0;\n    if (Date.now() - last < debounce) return null;\n    flow.set('lastWarn', Date.now());\n\n    return { payload: { warning: true, diff, a: a.level, b: b.level, ts: new Date().toISOString() } };\n}",
+    "x": 340,
+    "y": 240,
+    "wires": [["cek_warn"]]
+  },
+  {
+    "id": "cek_warn",
+    "type": "switch",
+    "name": "Cek warning?",
+    "property": "payload",
+    "checkall": "true",
+    "rules": [{ "t": "nnull" }],
+    "x": 560,
+    "y": 190,
+    "wires": [["debug_warn", "warn_out"]]
+  },
+  {
+    "id": "debug_warn",
+    "type": "debug",
+    "name": "Debug Warning",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "x": 560,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "warn_out",
+    "type": "mqtt out",
+    "name": "Warning Relay",
+    "topic": "ews/warning/relay",
+    "qos": "1",
+    "retain": false,
+    "broker": "broker_mqtt",
+    "x": 760,
+    "y": 190,
+    "wires": []
+  },
+  {
+    "id": "broker_mqtt",
+    "type": "mqtt-broker",
+    "name": "MQTT Broker",
+    "broker": "localhost",
+    "port": "1883"
+  }
+]

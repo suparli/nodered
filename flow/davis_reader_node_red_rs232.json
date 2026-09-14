@@ -1,0 +1,230 @@
+[
+    {
+        "id": "6856f3ec96699cac",
+        "type": "tab",
+        "label": "Davis Reader",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "5c401f68a01fc728",
+        "type": "inject",
+        "z": "6856f3ec96699cac",
+        "name": "Wakeup (60s)",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "60",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "5",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 120,
+        "y": 120,
+        "wires": [
+            [
+                "ed7beac3fbb7d4e6"
+            ]
+        ]
+    },
+    {
+        "id": "ed7beac3fbb7d4e6",
+        "type": "function",
+        "z": "6856f3ec96699cac",
+        "name": "Send Wakeup LF",
+        "func": "// Kirim LF (0x0A) untuk membangunkan console\n// Protocol: kirim LF, tunggu LF+CR response (max 3 attempts)\nvar attempts = flow.get(\"davisWakeupAttempts\") || 0;\n\nif (attempts >= 3) {\n    node.status({fill:\"red\", shape:\"ring\", text:\"Console not responding (3 attempts)\"});\n    flow.set(\"davisWakeupAttempts\", 0);\n    return null;\n}\n\nmsg.payload = Buffer.from([0x0A]);\nmsg.topic = \"wakeup\";\nflow.set(\"davisWakeupAttempts\", attempts + 1);\nnode.status({fill:\"yellow\", shape:\"dot\", text:\"Wakeup attempt \" + (attempts + 1) + \"/3\"});\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 120,
+        "wires": [
+            [
+                "fc24804678cf9803"
+            ]
+        ]
+    },
+    {
+        "id": "fc24804678cf9803",
+        "type": "serial out",
+        "z": "6856f3ec96699cac",
+        "name": "Send to Console",
+        "serial": "davis_serial_config",
+        "x": 590,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "8e1fa12ecb3b4c17",
+        "type": "inject",
+        "z": "6856f3ec96699cac",
+        "name": "Manual Wakeup",
+        "props": [
+            {
+                "p": "payload",
+                "v": "",
+                "vt": "date"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": "0.1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 120,
+        "y": 60,
+        "wires": [
+            [
+                "ed7beac3fbb7d4e6"
+            ]
+        ]
+    },
+    {
+        "id": "6288423335fa5dd8",
+        "type": "serial in",
+        "z": "6856f3ec96699cac",
+        "name": "Read from Console",
+        "serial": "davis_serial_config",
+        "x": 110,
+        "y": 220,
+        "wires": [
+            [
+                "a7e934c8b973305a"
+            ]
+        ]
+    },
+    {
+        "id": "a7e934c8b973305a",
+        "type": "function",
+        "z": "6856f3ec96699cac",
+        "name": "Parse Response & Send LPS",
+        "func": "// Response parser untuk Davis console\n// Deteksi: wakeup response, ACK, LOOP2 packet (99 bytes)\n\nvar data = msg.payload;\n\n// 1) Wakeup response: LF+CR (0x0A 0x0D)\nif (data.length >= 2 && data[0] === 0x0A && data[1] === 0x0D) {\n    flow.set(\"davisWakeupAttempts\", 0);\n    flow.set(\"davisState\", \"awake\");\n    var cmd = \"LPS 2 1\\n\";\n    msg.payload = cmd;\n    node.status({fill:\"green\", shape:\"dot\", text:\"Console awake - sending LPS 2 1\"});\n    return [msg, null];\n}\n\n// 2) ACK (0x06) - console siap kirim data\nif (data.length === 1 && data[0] === 0x06) {\n    flow.set(\"davisState\", \"receiving\");\n    node.status({fill:\"blue\", shape:\"dot\", text:\"ACK received - waiting for LOOP2\"});\n    return [null, null];\n}\n\n// 3) LOOP2 packet - two possible formats from serial timeout:\n//    a) 100 bytes: ACK (0x06) + 99-byte LOOP2 delivered together\n//    b) 99 bytes: standalone LOOP2 (ACK received in previous message)\n\nfunction checkLoop2Header(buf, off) {\n    return buf[off] === 0x4C && buf[off+1] === 0x4F && buf[off+2] === 0x4F;\n}\n\n// Format A: ACK + LOOP2 combined (100 bytes)\nif (data.length === 100 && data[0] === 0x06 && checkLoop2Header(data, 1)) {\n    if (data[5] === 1) {\n        flow.set(\"davisState\", \"done\");\n        node.status({fill:\"green\", shape:\"dot\", text:\"LOOP2 received (99 bytes)\"});\n        msg.payload = data.slice(1);\n        return [null, msg];\n    }\n    if (data[5] === 0) {\n        node.status({fill:\"yellow\", shape:\"dot\", text:\"LOOP packet ignored\"});\n        return [null, null];\n    }\n}\n\n// Format B: Standalone LOOP2 (99 bytes)\nif (data.length === 99 && checkLoop2Header(data, 0)) {\n    if (data[4] === 1) {\n        flow.set(\"davisState\", \"done\");\n        node.status({fill:\"green\", shape:\"dot\", text:\"LOOP2 received (99 bytes)\"});\n        msg.payload = data;\n        return [null, msg];\n    }\n    if (data[4] === 0) {\n        node.status({fill:\"yellow\", shape:\"dot\", text:\"LOOP packet ignored\"});\n        return [null, null];\n    }\n}\n\n// 4) Unknown response\nnode.status({fill:\"yellow\", shape:\"ring\", text:\"Unknown: \" + data.length + \" bytes\"});\n\nreturn [null, null];\n",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 350,
+        "y": 340,
+        "wires": [
+            [
+                "572feead0e878aee"
+            ],
+            [
+                "e6dfa89ffa5261a2"
+            ]
+        ]
+    },
+    {
+        "id": "e6dfa89ffa5261a2",
+        "type": "function",
+        "z": "6856f3ec96699cac",
+        "name": "Parse LOOP2 Packet",
+        "func": "// Parse Davis LOOP2 Packet (99 bytes)\n// Reference: VantageSerialProtocolDocs_v261.md Section X.2\n//\n// Konversi satuan:\n// - Suhu: Â°F â†’ Â°C\n// - Angin: mph â†’ m/s\n// - Tekanan: inHg â†’ hPa\n// - Hujan: clicks â†’ mm (Ã—0.2)\n// - ET: inch â†’ mm\n\nvar buf = msg.payload;\n\n// ====== STRIP LEADING BYTE ======\n// Serial sometimes delivers ACK (0x06) + LOOP2 together as 100 bytes\n// Strip the ACK byte so we have a clean 99-byte LOOP2 packet\nif (buf.length === 100 && buf[0] === 0x06) {\n    buf = buf.slice(1);\n}\n\n// ====== VALIDASI ======\n\n// Cek panjang (LOOP2 is exactly 99 bytes)\nif (buf.length < 99) {\n    node.error(\"Packet too short: \" + buf.length + \" bytes\");\n    return null;\n}\n\n// Cek header \"LOO\" (0x4C 0x4F 0x4F) at offsets 0,1,2\nif (buf[0] !== 0x4C || buf[1] !== 0x4F || buf[2] !== 0x4F) {\n    node.error(\"Invalid LOOP2 header\");\n    return null;\n}\n\n// Cek packet type = 1 (LOOP2) at offset 4\nif (buf[4] !== 1) {\n    node.error(\"Not a LOOP2 packet, type=\" + buf[4]);\n    return null;\n}\n\n// ====== CRC VALIDATION ======\n// CRC-CCITT dari protocol docs halaman 38\nvar crcTable = [\n    0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,\n    0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF,\n    0x1231, 0x0210, 0x3273, 0x2252, 0x52B5, 0x4294, 0x72F7, 0x62D6,\n    0x9339, 0x8318, 0xB37B, 0xA35A, 0xD3BD, 0xC39C, 0xF3FF, 0xE3DE,\n    0x2462, 0x3443, 0x0420, 0x1401, 0x64E6, 0x74C7, 0x44A4, 0x5485,\n    0xA56A, 0xB54B, 0x8528, 0x9509, 0xE5EE, 0xF5CF, 0xC5AC, 0xD58D,\n    0x3653, 0x2672, 0x1611, 0x0630, 0x76D7, 0x66F6, 0x5695, 0x46B4,\n    0xB75B, 0xA77A, 0x9719, 0x8738, 0xF7DF, 0xE7FE, 0xD79D, 0xC7BC,\n    0x48C4, 0x58E5, 0x6886, 0x78A7, 0x0840, 0x1861, 0x2802, 0x3823,\n    0xC9CC, 0xD9ED, 0xE98E, 0xF9AF, 0x8948, 0x9969, 0xA90A, 0xB92B,\n    0x5AF5, 0x4AD4, 0x7AB7, 0x6A96, 0x1A71, 0x0A50, 0x3A33, 0x2A12,\n    0xDBFD, 0xCBDC, 0xFBBF, 0xEB9E, 0x9B79, 0x8B58, 0xBB3B, 0xAB1A,\n    0x6CA6, 0x7C87, 0x4CE4, 0x5CC5, 0x2C22, 0x3C03, 0x0C60, 0x1C41,\n    0xEDAE, 0xFD8F, 0xCDEC, 0xDDCD, 0xAD2A, 0xBD0B, 0x8D68, 0x9D49,\n    0x7E97, 0x6EB6, 0x5ED5, 0x4EF4, 0x3E13, 0x2E32, 0x1E51, 0x0E70,\n    0xFF9F, 0xEFBE, 0xDFDD, 0xCFFC, 0xBF1B, 0xAF3A, 0x9F59, 0x8F78,\n    0x9188, 0x81A9, 0xB1CA, 0xA1EB, 0xD10C, 0xC12D, 0xF14E, 0xE16F,\n    0x1080, 0x00A1, 0x30C2, 0x20E3, 0x5004, 0x4025, 0x7046, 0x6067,\n    0x83B9, 0x9398, 0xA3FB, 0xB3DA, 0xC33D, 0xD31C, 0xE37F, 0xF35E,\n    0x02B1, 0x1290, 0x22F3, 0x32D2, 0x4235, 0x5214, 0x6277, 0x7256,\n    0xB5EA, 0xA5CB, 0x95A8, 0x8589, 0xF56E, 0xE54F, 0xD52C, 0xC50D,\n    0x34E2, 0x24C3, 0x14A0, 0x0481, 0x7466, 0x6447, 0x5424, 0x4405,\n    0xA7DB, 0xB7FA, 0x8799, 0x97B8, 0xE75F, 0xF77E, 0xC71D, 0xD73C,\n    0x26D3, 0x36F2, 0x0691, 0x16B0, 0x6657, 0x7676, 0x4615, 0x5634,\n    0xD94C, 0xC96D, 0xF90E, 0xE92F, 0x99C8, 0x89E9, 0xB98A, 0xA9AB,\n    0x5844, 0x4865, 0x7806, 0x6827, 0x18C0, 0x08E1, 0x3882, 0x28A3,\n    0xCB7D, 0xDB5C, 0xEB3F, 0xFB1E, 0x8BF9, 0x9BD8, 0xABBB, 0xBB9A,\n    0x4A75, 0x5A54, 0x6A37, 0x7A16, 0x0AF1, 0x1AD0, 0x2AB3, 0x3A92,\n    0xFD2E, 0xED0F, 0xDD6C, 0xCD4D, 0xBDAA, 0xAD8B, 0x9DE8, 0x8DC9,\n    0x7C26, 0x6C07, 0x5C64, 0x4C45, 0x3CA2, 0x2C83, 0x1CE0, 0x0CC1,\n    0xEF1F, 0xFF3E, 0xCF5D, 0xDF7C, 0xAF9B, 0xBFBA, 0x8FD9, 0x9FF8,\n    0x6E17, 0x7E36, 0x4E55, 0x5E74, 0x2E93, 0x3EB2, 0x0ED1, 0x1EF0\n];\n\nvar crc = 0;\nfor (var i = 0; i < 99; i++) {\n    crc = crcTable[((crc >> 8) ^ buf[i]) & 0xFF] ^ ((crc << 8) & 0xFFFF);\n}\nvar crcValid = (crc === 0);\n\nif (!crcValid) {\n    node.warn(\"CRC invalid: 0x\" + crc.toString(16) + \" - data mungkin corrupt\");\n}\n\n// ====== HELPER FUNCTIONS ======\n\nfunction readUInt16LE(buffer, offset) {\n    return buffer[offset] | (buffer[offset + 1] << 8);\n}\n\nfunction readInt16LE(buffer, offset) {\n    var val = readUInt16LE(buffer, offset);\n    if (val > 32767) val -= 65536;\n    return val;\n}\n\nfunction fToC(f) {\n    if (f === 255 || f === 32767 || f === -32768) return null;\n    return Math.round(((f - 32) * 5 / 9) * 100) / 100;\n}\n\nfunction fOffset90ToC(val) {\n    if (val === 255) return null;\n    return fToC(val - 90);\n}\n\nfunction mphToMs(mph) {\n    if (mph === 255 || mph === 32767 || mph === 65535) return null;\n    return Math.round(mph * 0.44704 * 100) / 100;\n}\n\nfunction tenthsMphToMs(val) {\n    if (val === 32767 || val === 65535) return null;\n    return Math.round(val * 0.1 * 0.44704 * 100) / 100;\n}\n\nfunction inHgToHpa(inHg) {\n    if (inHg === 0 || inHg === 32767) return null;\n    return Math.round(inHg * 0.0338639 * 100) / 100;\n}\n\nfunction clicksToMm(clicks) {\n    if (clicks === 32767 || clicks === 65535) return null;\n    return Math.round(clicks * 0.2 * 100) / 100;\n}\n\nfunction milsToMm(mils) {\n    if (mils === 32767 || mils === 65535) return null;\n    return Math.round(mils * 0.0254 * 100) / 100;\n}\n\nfunction barTrendText(val) {\n    if (val === 196 || val === -60) return \"Falling Rapidly\";\n    if (val === 236 || val === -20) return \"Falling Slowly\";\n    if (val === 0) return \"Steady\";\n    if (val === 20) return \"Rising Slowly\";\n    if (val === 60) return \"Rising Rapidly\";\n    return \"Unknown (\" + val + \")\";\n}\n\nfunction parseStormDate(val) {\n    if (val === 0 || val === 32767 || val === 65535) return null;\n    var year = (val & 0x7F) + 2000;\n    var day = (val >> 7) & 0x1F;\n    var month = (val >> 12) & 0x0F;\n    return year + \"-\" + (\"0\" + month).slice(-2) + \"-\" + (\"0\" + day).slice(-2);\n}\n\nfunction parseTime(val) {\n    if (val === 0 || val === 32767 || val === 65535) return null;\n    var hour = Math.floor(val / 100);\n    var min = val % 100;\n    return (\"0\" + hour).slice(-2) + \":\" + (\"0\" + min).slice(-2);\n}\n\n// ====== PARSE ALL FIELDS ======\n\n// Offset 3: Bar Trend\nvar barTrend = buf[3];\n\n// Offset 7-8: Barometer (inHg / 1000)\nvar barometerRaw = readUInt16LE(buf, 7);\nvar barometerInHg = barometerRaw / 1000.0;\nvar barometerHpa = inHgToHpa(barometerRaw);\n\n// Offset 9-10: Inside Temperature (Â°F / 10)\n// Check raw int before division to avoid floating point comparison issues\nvar insideTempRaw = readInt16LE(buf, 9);\nvar insideTempC = (insideTempRaw === 32767 || insideTempRaw === -32768) ? null : fToC(insideTempRaw / 10.0);\n\n// Offset 11: Inside Humidity\nvar insideHumidity = buf[11];\n\n// Offset 12-13: Outside Temperature (Â°F / 10)\n// Check raw int before division to avoid floating point comparison issues\nvar outsideTempRaw = readInt16LE(buf, 12);\nvar outsideTempC = (outsideTempRaw === 32767 || outsideTempRaw === -32768) ? null : fToC(outsideTempRaw / 10.0);\n\n// Offset 14: Wind Speed (mph)\nvar windSpeedRaw = buf[14];\nvar windSpeedMs = mphToMs(windSpeedRaw);\n\n// Offset 16-17: Wind Direction (degrees)\nvar windDirection = readUInt16LE(buf, 16);\nif (windDirection === 0) windDirection = null;\n\n// Offset 18-19: 10-Min Avg Wind Speed (0.1 mph)\nvar windAvg10Raw = readUInt16LE(buf, 18);\nvar windAvg10Ms = tenthsMphToMs(windAvg10Raw);\n\n// Offset 20-21: 2-Min Avg Wind Speed (0.1 mph)\nvar windAvg2Raw = readUInt16LE(buf, 20);\nvar windAvg2Ms = tenthsMphToMs(windAvg2Raw);\n\n// Offset 22-23: 10-Min Wind Gust (0.1 mph)\nvar windGustRaw = readUInt16LE(buf, 22);\nvar windGustMs = tenthsMphToMs(windGustRaw);\n\n// Offset 24-25: Wind Direction for 10-Min Gust\nvar gustDirection = readUInt16LE(buf, 24);\nif (gustDirection === 0) gustDirection = null;\n\n// Offset 30-31: Dew Point (Â°F, 255=dashed)\nvar dewPointRaw = readInt16LE(buf, 30);\nvar dewPointC = fToC(dewPointRaw);\n\n// Offset 33: Outside Humidity\nvar outsideHumidity = buf[33];\n\n// Offset 35-36: Heat Index (Â°F, 255=dashed)\nvar heatIndexRaw = readInt16LE(buf, 35);\nvar heatIndexC = fToC(heatIndexRaw);\n\n// Offset 37-38: Wind Chill (Â°F, 255=dashed)\nvar windChillRaw = readInt16LE(buf, 37);\nvar windChillC = fToC(windChillRaw);\n\n// Offset 39-40: THSW Index (Â°F, 255=dashed)\nvar thswRaw = readInt16LE(buf, 39);\nvar thswC = fToC(thswRaw);\n\n// Offset 41-42: Rain Rate (clicks/hr)\nvar rainRateRaw = readUInt16LE(buf, 41);\nvar rainRateMmhr = clicksToMm(rainRateRaw);\n\n// Offset 43: UV Index\nvar uvIndex = buf[43];\nif (uvIndex === 255) uvIndex = null;\n\n// Offset 44-45: Solar Radiation (W/mÂ²)\nvar solarRadiation = readUInt16LE(buf, 44);\nif (solarRadiation === 32767 || solarRadiation === 65535) solarRadiation = null;\n\n// Offset 46-47: Storm Rain (clicks)\nvar stormRainRaw = readUInt16LE(buf, 46);\nvar stormRainMm = clicksToMm(stormRainRaw);\n\n// Offset 48-49: Storm Start Date\nvar stormStartDate = parseStormDate(readUInt16LE(buf, 48));\n\n// Offset 50-51: Daily Rain (clicks)\nvar dayRainRaw = readUInt16LE(buf, 50);\nvar dayRainMm = clicksToMm(dayRainRaw);\n\n// Offset 52-53: Last 15-min Rain (clicks)\nvar last15RainRaw = readUInt16LE(buf, 52);\nvar last15RainMm = clicksToMm(last15RainRaw);\n\n// Offset 54-55: Last Hour Rain (clicks)\nvar lastHourRainRaw = readUInt16LE(buf, 54);\nvar lastHourRainMm = clicksToMm(lastHourRainRaw);\n\n// Offset 56-57: Daily ET (0.001 inch)\nvar dayEtRaw = readUInt16LE(buf, 56);\nvar dayEtMm = milsToMm(dayEtRaw);\n\n// Offset 58-59: Last 24-Hour Rain (clicks)\nvar last24hrRainRaw = readUInt16LE(buf, 58);\nvar last24hrRainMm = clicksToMm(last24hrRainRaw);\n\n// Offset 60: Bar Reduction Method\nvar barReductionMethod = buf[60];\nvar barReductionText = \"Unknown\";\nif (barReductionMethod === 0) barReductionText = \"User Offset\";\nelse if (barReductionMethod === 1) barReductionText = \"Altimeter Setting\";\nelse if (barReductionMethod === 2) barReductionText = \"NOAA Bar Reduction\";\n\n// Offset 61-62: User Barometric Offset (0.001 inHg)\nvar userBarOffsetRaw = readInt16LE(buf, 61);\nvar userBarOffsetHpa = Math.round(userBarOffsetRaw * 0.0338639 * 100) / 100;\n\n// Offset 63-64: Barometric Calibration (0.001 inHg)\nvar barCalRaw = readInt16LE(buf, 63);\nvar barCalHpa = Math.round(barCalRaw * 0.0338639 * 100) / 100;\n\n// Offset 65-66: Barometric Sensor Raw Reading (0.001 inHg)\nvar barSensorRaw = readUInt16LE(buf, 65);\nvar barSensorHpa = Math.round(barSensorRaw * 0.0338639 * 100) / 100;\n\n// Offset 67-68: Absolute Barometric Pressure (0.001 inHg)\nvar barAbsoluteRaw = readUInt16LE(buf, 67);\nvar barAbsoluteHpa = Math.round(barAbsoluteRaw * 0.0338639 * 100) / 100;\n\n// Offset 69-70: Altimeter Setting (0.001 inHg)\nvar altimeterRaw = readUInt16LE(buf, 69);\nvar altimeterHpa = Math.round(altimeterRaw * 0.0338639 * 100) / 100;\n\n// ====== BUILD OUTPUT JSON ======\n\nvar output = {\n    timestamp: new Date().toISOString(),\n    crcValid: crcValid,\n    packetType: \"LOOP2\",\n    inside: {\n        temperature_celsius: insideTempC,\n        humidity_percent: insideHumidity\n    },\n    outside: {\n        temperature_celsius: outsideTempC,\n        humidity_percent: outsideHumidity,\n        dewpoint_celsius: dewPointC,\n        heatindex_celsius: heatIndexC,\n        windchill_celsius: windChillC,\n        thsw_index_celsius: thswC\n    },\n    barometer: {\n        pressure_hpa: barometerHpa,\n        trend: barTrendText(barTrend),\n        reduction_method: barReductionText,\n        absolute_hpa: barAbsoluteHpa,\n        altimeter_hpa: altimeterHpa,\n        raw_sensor_hpa: barSensorHpa,\n        user_offset_hpa: userBarOffsetHpa,\n        calibration_hpa: barCalHpa\n    },\n    wind: {\n        speed_ms: windSpeedMs,\n        direction_degrees: windDirection,\n        avg_10min_ms: windAvg10Ms,\n        avg_2min_ms: windAvg2Ms,\n        gust_ms: windGustMs,\n        gust_direction_degrees: gustDirection\n    },\n    rain: {\n        rate_mmhr: rainRateMmhr,\n        daily_mm: dayRainMm,\n        last_15min_mm: last15RainMm,\n        last_hour_mm: lastHourRainMm,\n        last_24hr_mm: last24hrRainMm,\n        storm_mm: stormRainMm,\n        storm_start: stormStartDate\n    },\n    solar: {\n        uv_index: uvIndex,\n        radiation_wm2: solarRadiation\n    },\n    et: {\n        daily_mm: dayEtMm\n    }\n};\n\n// Simpan ke flow context\nflow.set(\"davisWeatherData\", output);\nflow.set(\"davisLastUpdate\", output.timestamp);\n\nmsg.payload = output;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 660,
+        "y": 340,
+        "wires": [
+            [
+                "999f87c19192bd5f",
+                "6b8848cd3a5dab0e"
+            ]
+        ]
+    },
+    {
+        "id": "999f87c19192bd5f",
+        "type": "function",
+        "z": "6856f3ec96699cac",
+        "name": "Store Data",
+        "func": "// Simpan data LOOP2 ke flow context\nvar data = msg.payload;\n\nflow.set(\"davisLastData\", data);\nflow.set(\"davisLastUpdate\", new Date().toISOString());\n\nnode.status({fill:\"green\", shape:\"dot\", text:\"Updated: \" + new Date().toLocaleTimeString()});\n\nmsg.payload = data;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 730,
+        "y": 460,
+        "wires": [
+            [
+                "597aebd17acf7088"
+            ]
+        ]
+    },
+    {
+        "id": "597aebd17acf7088",
+        "type": "debug",
+        "z": "6856f3ec96699cac",
+        "name": "DEBUG - Weather Data",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": true,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "payload.inside.temperature_celsius",
+        "statusType": "msg",
+        "x": 960,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "6b8848cd3a5dab0e",
+        "type": "debug",
+        "z": "6856f3ec96699cac",
+        "name": "DEBUG - Raw LOOP2",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 940,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "572feead0e878aee",
+        "type": "serial out",
+        "z": "6856f3ec96699cac",
+        "name": "Send to Console",
+        "serial": "davis_serial_config",
+        "x": 430,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "davis_serial_config",
+        "type": "serial-port",
+        "name": "Davis Console RS232",
+        "serialport": "/dev/ttyS2",
+        "serialbaud": "19200",
+        "databits": "8",
+        "parity": "none",
+        "stopbits": "1",
+        "waitfor": "",
+        "newline": "1000",
+        "bin": "bin",
+        "out": "time",
+        "addchar": "",
+        "responsetimeout": ""
+    }
+]
