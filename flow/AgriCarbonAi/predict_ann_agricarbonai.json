@@ -1,0 +1,448 @@
+[
+    {
+        "id": "14f2a19540a3c0f9",
+        "type": "tab",
+        "label": "Predict ANN",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "670d03ee6b47edb5",
+        "type": "debug",
+        "z": "14f2a19540a3c0f9",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 760,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "88cf8ac781165050",
+        "type": "mqtt in",
+        "z": "14f2a19540a3c0f9",
+        "name": "WLNODE",
+        "topic": "application/6acbeaa9-9875-4d6e-8c09-f12234841701/device/+/event/up",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "1af37f0f852dec1b",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 60,
+        "y": 200,
+        "wires": [
+            [
+                "c161556192efac1a"
+            ]
+        ]
+    },
+    {
+        "id": "fc9f313e4d894e46",
+        "type": "mqtt out",
+        "z": "14f2a19540a3c0f9",
+        "name": "",
+        "topic": "devices/389/telemetry",
+        "qos": "2",
+        "retain": "true",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "2536076f79f0920d",
+        "x": 720,
+        "y": 720,
+        "wires": []
+    },
+    {
+        "id": "6e9d44e7e3c2ba39",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "name": "Predict ANN",
+        "func": "// =====================================================================\n// 1. PARAMETER DASAR JARINGAN SARAF TIRUAN (ANN)\n// =====================================================================\n\n// sheet.getRange(4, 2) -> Baris 4, Kolom B (2)\n// Deskripsi: Nilai Temp (Temperatur) yang digunakan dalam fungsi aktivasi.\nconst Temp = 1; \n\n// sheet.getRange(6, 2) -> Baris 6, Kolom B (2)\n// Deskripsi: Number of Layers (Total jumlah layer: Input, Hidden, Output).\nconst nl = 3; \n\n// sheet.getRange(7, 2) -> Baris 7, Kolom B (2)\n// Deskripsi: Number of Node Input Layer (Jumlah fitur input).\nconst ni = 3; \n\n// sheet.getRange(8, 2) -> Baris 8, Kolom B (2)\n// Deskripsi: Number of Node Hidden Layer.\nconst nh = 5; \n\n// sheet.getRange(9, 2) -> Baris 9, Kolom B (2)\n// Deskripsi: Number of Node Output Layer.\nconst no = 2; \n\nconst nn = [];\nnn[0] = ni; // Layer 0: Input (3 node)\nnn[1] = nh; // Layer 1: Hidden (5 node)\nnn[2] = no; // Layer 2: Output (2 node)\n\n// =====================================================================\n// 2. AMBIL INPUT DARI MSG.PAYLOAD (Menggantikan a, b, c)\n// =====================================================================\nconst a = msg.payload.a !== undefined ? msg.payload.a : (Array.isArray(msg.payload) ? msg.payload[0] : 0);\nconst b = msg.payload.b !== undefined ? msg.payload.b : (Array.isArray(msg.payload) ? msg.payload[1] : 0);\nconst c = msg.payload.c !== undefined ? msg.payload.c : (Array.isArray(msg.payload) ? msg.payload[2] : 0);\n\nconst input = [a, b, c];\nconst xinp = [];\n\nfor (let i = 0; i < ni; i++) {\n  xinp[i] = input[i];\n}\n\n// Inisialisasi array normalisasi input dan output (Sesuai Script Asli)\nconst maxi = [], mixi = [], maxoCH4 = [], mixoCH4 = [], maxoN2O = [], mixoN2O = [];\n\n// =====================================================================\n// 3. PARAMETER MAX DAN MIN INPUT (Kolom D, E, F)\n// =====================================================================\n// Loop mengambil dari:\n// sheet.getRange(28, 4 + i) -> Baris 28 (Max), Kolom D(4), E(5), F(6)\n// sheet.getRange(30, 4 + i) -> Baris 30 (Min), Kolom D(4), E(5), F(6)\nconst staticMaxi = [0.59, 28.60, 1.09]; // [Kelembaban, Suhu, EC] dari baris 28\nconst staticMixi = [0.47, 25.90, 0.43]; // [Kelembaban, Suhu, EC] dari baris 30\n\nfor (let i = 0; i < ni; i++) {\n  maxi[i] = staticMaxi[i];\n  mixi[i] = staticMixi[i];\n}\n\n// =====================================================================\n// 4. PARAMETER MAX DAN MIN OUTPUT (Kolom B dan C)\n// =====================================================================\n// Output CH4\n// maxoCH4: sheet.getRange(28, 2) -> Baris 28 (Max), Kolom B(2) = 660.23\n// mixoCH4: sheet.getRange(30, 2) -> Baris 30 (Min), Kolom B(2) = 0.45\nfor (let i = 0; i < no; i++) {\n  maxoCH4[i] = 660.23; \n  mixoCH4[i] = 0.45;\n}\n\n// Output N2O\n// maxoN2O: sheet.getRange(28, 3) -> Baris 28 (Max), Kolom C(3) = 5.40\n// mixoN2O: sheet.getRange(30, 3) -> Baris 30 (Min), Kolom C(3) = -25.99\nfor (let i = 0; i < no; i++) {\n  maxoN2O[i] = 5.40; \n  mixoN2O[i] = -25.99;\n}\n\n// =====================================================================\n// 5. MEMBENTUK MATRIKS BOBOT / WEIGHTS\n// =====================================================================\n// Script asli: sheet.getRange(2 + TW, 12).getValue() // Kolom L\n// Deskripsi: Mengekstrak 25 nilai bobot berurutan dari Baris 3 hingga Baris 27\n// dari kolom berisi \"Updated Weights\" (Sesuai referensi baris di loop TW).\nconst flatWeights = [\n  3.689,   // TW=1  (Baris 3)\n  -1.705,  // TW=2  (Baris 4)\n  6.790,   // TW=3  (Baris 5)\n  -1.350,  // TW=4  (Baris 6)\n  -2.728,  // TW=5  (Baris 7)\n  2.210,   // TW=6  (Baris 8)\n  -5.068,  // TW=7  (Baris 9)\n  2.840,   // TW=8  (Baris 10)\n  -7.006,  // TW=9  (Baris 11)\n  0.853,   // TW=10 (Baris 12)\n  5.340,   // TW=11 (Baris 13)\n  -7.821,  // TW=12 (Baris 14)\n  0.524,   // TW=13 (Baris 15)\n  -16.108, // TW=14 (Baris 16)\n  21.319,  // TW=15 (Baris 17)\n  9.766,   // TW=16 (Baris 18)\n  -5.564,  // TW=17 (Baris 19)\n  -0.119,  // TW=18 (Baris 20)\n  -5.619,  // TW=19 (Baris 21)\n  -7.975,  // TW=20 (Baris 22)\n  -8.519,  // TW=21 (Baris 23)\n  -1.050,  // TW=22 (Baris 24)\n  7.647,   // TW=23 (Baris 25)\n  0.996,   // TW=24 (Baris 26)\n  9.795    // TW=25 (Baris 27)\n];\n\n// Re-konstruksi Array 3D sesuai script asli\nlet TW_index = 0; // Pengganti referensi iterasi range (karena data sudah di array)\nconst w = [];\n\nfor (let l = 1; l < nl; l++) {\n  w[l - 1] = [];\n  for (let j = 0; j < nn[l]; j++) {\n    w[l - 1][j] = [];\n    for (let k = 0; k < nn[l - 1]; k++) {\n      w[l - 1][j][k] = flatWeights[TW_index];\n      TW_index++;\n    }\n  }\n}\n\n// =====================================================================\n// 6. NORMALISASI INPUT\n// =====================================================================\nfor (let i = 0; i < ni; i++) {\n  xinp[i] = (xinp[i] - mixi[i]) / (maxi[i] - mixi[i]);\n}\n\n// =====================================================================\n// 7. PROSES FORWARD PROPAGATION\n// =====================================================================\nconst X = [];\nX[0] = xinp;\n\nfor (let l = 1; l < nl; l++) {\n  X[l] = [];\n  for (let j = 0; j < nn[l]; j++) {\n    let sum = 0;\n    for (let k = 0; k < nn[l - 1]; k++) {\n      sum += w[l - 1][j][k] * X[l - 1][k];\n    }\n    // Rumus Sigmoid Bipolar/Khusus sesuai script\n    X[l][j] = 1 / (1 + Temp * Math.exp(-sum));\n  }\n}\n\n// =====================================================================\n// 8. DENORMALISASI OUTPUT (Sesuai perhitungan array asli)\n// =====================================================================\n// Denormalisasi output CH4\nconst CH4 = (X[nl - 1][0] - 0.2) * (maxoCH4[0] - mixoCH4[0]) / 0.6 + mixoCH4[0];\n\n// Denormalisasi output N2O\nconst N2O = (X[nl - 1][1] - 0.2) * (maxoN2O[0] - mixoN2O[0]) / 0.6 + mixoN2O[0];\n\n// =====================================================================\n// 9. RETURN KE PAYLOAD NODE-RED (Menggantikan `return [CH4, N2O]`)\n// =====================================================================\nmsg.payload = {\n  data :{\n    CH4: CH4,\n    N2O: N2O,\n    soil_moisture : a*100,\n    soil_temperature :b,\n    electrical_conductivity:c,\n    battery:msg.payload.batV,\n    rssi:msg.payload.rssi,\n    snr:msg.payload.snr\n  },\n  timestamp:msg.payload.time,\n  deviceName:msg.payload.deviceName,\n  deviceType:msg.payload.deviceType\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 2,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 200,
+        "wires": [
+            [
+                "3c777728dec5c9f2",
+                "46c37d9ea71fb89e"
+            ]
+        ]
+    },
+    {
+        "id": "c161556192efac1a",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "name": "structured json",
+        "func": "let data = (typeof msg.payload === \"string\") ? JSON.parse(msg.payload) : msg.payload;\n\nlet temp = data.object?.temp_SOIL || 0;\nlet soil = data.object?.water_SOIL || 0;\nlet ec = data.object?.conduct_SOIL || 0;\nlet bat = data.object?.BatV || 0;\nlet time = data.time || null;\nlet deviceName = data.deviceInfo?.deviceName || \"unknown_device\";\nlet deviceType = data.deviceInfo?.deviceProfileName || \"unknown_type\";\nlet rssi =data.rxInfo[0]?.rssi|| null;\nlet snr = data.rxInfo[0]?.snr || null;\n\nmsg.payload = {\n  \"a\":soil/100,\n  \"b\":temp,\n  \"c\":ec,\n  \"time\":time,\n  \"deviceName\":deviceName,\n  \"deviceType\":deviceType,\n  \"batV\":bat,\n  \"rssi\":rssi,\n  \"snr\":snr\n  \n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 260,
+        "y": 200,
+        "wires": [
+            [
+                "6e9d44e7e3c2ba39"
+            ]
+        ]
+    },
+    {
+        "id": "3c777728dec5c9f2",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "name": "Convert Data",
+        "func": "let data = (typeof msg.payload === \"string\") ? JSON.parse(msg.payload) : msg.payload;\n\nlet time = data.timestamp || \"\";\nlet deviceName = data?.deviceName || \"unknown_device\";\nlet deviceType = data?.deviceType || \"unknown_type\";\n\nlet csvLine = \"\";\n\nif (deviceType === \"WL\") {\n    let temp = data.object?.Sensor_Temp || \"\";\n    let wl = data.object?.Sensor_WL || \"\";\n    let bat = data.object?.BatV || \"\";\n    let exti = data.object?.EXTI_Trigger || \"\";\n    csvLine = `${time},${deviceName},${temp},${wl},${bat},${exti}\\n`;\n}\n\nelse if (deviceType === \"SOIL\") {\n    let temp = data.data?.soil_temperature || \"\";\n    let soil = data.data?.soil_moisture || \"\";\n    let ec = data.data?.electrical_conductivity || \"\";\n    let ch4 = data.data?.CH4 || \"\";\n    let n2o = data.data?.N2O || \"\";\n    let bat = data.data?.bat || \"\";\n    csvLine = `${time},${deviceName},${temp},${soil},${ec},${ch4},${n2o},${bat}\\n`;\n}\nelse {\n    csvLine = `${time},${deviceName},Unknown device type: ${deviceType}\\n`;\n}\n\nmsg.payload = csvLine;\nmsg.filename = `/media/usb0/${deviceName}.csv`;  // ganti sesuai OS-mu\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 300,
+        "wires": [
+            [
+                "04127f59b4c3eefe"
+            ]
+        ]
+    },
+    {
+        "id": "04127f59b4c3eefe",
+        "type": "file",
+        "z": "14f2a19540a3c0f9",
+        "name": "Save CSV Via USB DISK",
+        "filename": "filename",
+        "filenameType": "msg",
+        "appendNewline": false,
+        "createDir": false,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 770,
+        "y": 300,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "46c37d9ea71fb89e",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "name": "Save Data Sementara",
+        "func": "// Parse payload\nlet input = (typeof msg.payload === \"string\")\n    ? JSON.parse(msg.payload)\n    : msg.payload;\n\n// Validasi\nif (!input || typeof input !== \"object\") {\n    node.error(\"Payload tidak valid\", msg);\n    return null;\n}\n\n// Device name\nlet deviceName = input.deviceName || \"unknown_device\";\n\n// Bersihkan nama device\n// \"Sensor Soil 1\" → \"Sensor_Soil_1\"\nlet deviceKey = deviceName\n    .trim()\n    .replace(/\\s+/g, \"_\")\n    .replace(/[^a-zA-Z0-9_-]/g, \"_\");\n\n// Ambil data sensor\nlet sensorData = input.data || {};\n\n// Simpan parameter\nfor (let key in sensorData) {\n\n    let value = sensorData[key];\n\n    // Konversi string angka menjadi number\n    if (\n        typeof value === \"string\" &&\n        value.trim() !== \"\" &&\n        !isNaN(value)\n    ) {\n        value = Number(value);\n    }\n\n    // Bersihkan nama parameter\n    let parameterKey = key\n        .trim()\n        .replace(/\\s+/g, \"_\")\n        .replace(/[^a-zA-Z0-9_-]/g, \"_\");\n\n    // Contoh:\n    // Sensor_Soil_1_CH4\n    // Sensor_Soil_1_soil_moisture\n    let dynamicKey = `${deviceKey}_${parameterKey}`;\n\n    flow.set(dynamicKey, value);\n}\n\n// Simpan metadata\nflow.set(`${deviceKey}_timestamp`, input.timestamp || null);\nflow.set(`${deviceKey}_deviceType`, input.deviceType || null);\n\n// Output\nmsg.payload = {\n    status: \"Data berhasil disimpan\",\n    device: deviceKey,\n    keys: Object.keys(sensorData).map(key => {\n        let parameterKey = key\n            .trim()\n            .replace(/\\s+/g, \"_\")\n            .replace(/[^a-zA-Z0-9_-]/g, \"_\");\n\n        return `${deviceKey}_${parameterKey}`;\n    })\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 460,
+        "y": 380,
+        "wires": [
+            [
+                "670d03ee6b47edb5"
+            ]
+        ]
+    },
+    {
+        "id": "636e6ec5e4590767",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "d": true,
+        "name": "Ambil Data Sementara",
+        "func": "// Ambil semua key dari flow context\nlet contextKeys = flow.keys();\n\n// Object untuk menyimpan semua data\nlet result = {};\n\n// Ambil semua value\nfor (let key of contextKeys) {\n    result[key] = flow.get(key);\n}\n\n// Output\nmsg.payload = result;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 320,
+        "y": 540,
+        "wires": [
+            [
+                "9f9b67d38b86d587"
+            ]
+        ]
+    },
+    {
+        "id": "def24db4f88df93d",
+        "type": "http request",
+        "z": "14f2a19540a3c0f9",
+        "d": true,
+        "name": "Post to dataonline",
+        "method": "use",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 770,
+        "y": 460,
+        "wires": [
+            [
+                "a94e057f272d005d"
+            ]
+        ]
+    },
+    {
+        "id": "9f9b67d38b86d587",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "d": true,
+        "name": "Konfigurasi API (SOIL1)",
+        "func": "function encodeForm(obj) {\n    return Object.keys(obj)\n        .map(k => encodeURIComponent(k) + \"=\" + encodeURIComponent(obj[k]))\n        .join(\"&\");\n}\n\nconst data = msg.payload || {};\n\nlet now = new Date();\nlet pad = n => n.toString().padStart(2, '0');\n\nlet datetime = \n    now.getFullYear() + '-' +\n    pad(now.getMonth() + 1) + '-' +\n    pad(now.getDate()) + ' ' +\n    pad(now.getHours()) + ':' +\n    pad(now.getMinutes()) + ':' +\n    pad(now.getSeconds());\n\nconst bodyData = {\n    datetime: datetime,\n    device_id: \"388\",  // Bisa kamu ubah jika perlu spesifik\n    c1: data[\"Soil_Dry_1_soil_moisture\"] || 0,\n    c2: data[\"Soil_Dry_1_soil_temperature\"] || 0,\n    c3: data[\"Soil_Dry_1_electrical_conductivity\"] || 0,\n    c4: data[\"Soil_Dry_1_battery\"] || 0,\n    c5: data[\"Soil_Dry_2_soil_moisture\"] || 0,\n    c6: data[\"Soil_Dry_2_soil_temperature\"] || 0,\n    c7: data[\"Soil_Dry_2_electrical_conductivity\"] || 0,\n    c8: data[\"Soil_Dry_2_battery\"] || 0,\n    c9: data[\"Soil_Wet_1_soil_moisture\"] || 0,\n    c10: data[\"Soil_Wet_1_soil_temperature\"] || 0,\n    c11: data[\"Soil_Wet_1_electrical_conductivity\"] || 0,\n    c12: data[\"Soil_Wet_1_battery\"] || 0,\n    c13: data[\"Soil_Wet_2_soil_moisture\"] || 0,\n    c14: data[\"Soil_Wet_2_soil_temperature\"] || 0,\n    c15: data[\"Soil_Wet_2_electrical_conductivity\"] || 0,\n    c16: data[\"Soil_Wet_2_battery\"] || 0,\n    c17: data[\"Soil_Dry_1_CH4\"] || 0,\n    c18: data[\"Soil_Dry_1_N2O\"] || 0,\n    c19: data[\"Soil_Dry_2_CH4\"] || 0,\n    c20: data[\"Soil_Dry_2_N2O\"] || 0,\n    c21: data[\"Soil_Wet_1_CH4\"] || 0,\n    c22: data[\"Soil_Wet_1_N2O\"] || 0,\n    c23: data[\"Soil_Wet_2_CH4\"] || 0,\n    c24: data[\"Soil_Wet_2_N2O\"] || 0\n};\n\nmsg.method = \"POST\";\nmsg.url = \"https://api.dataonline.co.id/v1/storeData?\"; // ← Ganti dengan URL API kamu\nmsg.headers = {\n    \"api_token\": \"Zk1VeVhrM0hzTUJZM1lFYXFnS3czdm9LMkExNGY5emU=\",  // ← Ganti dengan token kamu\n    \"Content-Type\": \"application/x-www-form-urlencoded\",\n    \"Connection\":\"keep-alive\",\n\n};\nmsg.payload = encodeForm(bodyData);\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 570,
+        "y": 540,
+        "wires": [
+            [
+                "def24db4f88df93d"
+            ]
+        ]
+    },
+    {
+        "id": "a94e057f272d005d",
+        "type": "debug",
+        "z": "14f2a19540a3c0f9",
+        "d": true,
+        "name": "debug 4",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 940,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "eeaf768541cbf389",
+        "type": "inject",
+        "z": "14f2a19540a3c0f9",
+        "d": true,
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "1800",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 90,
+        "y": 540,
+        "wires": [
+            [
+                "636e6ec5e4590767"
+            ]
+        ]
+    },
+    {
+        "id": "442c3dcf5a3bc0c9",
+        "type": "debug",
+        "z": "14f2a19540a3c0f9",
+        "name": "debug 5",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 380,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "d55b04aa9a26646d",
+        "type": "function",
+        "z": "14f2a19540a3c0f9",
+        "name": "Ambil Data Sementara",
+        "func": "// Ambil semua key dari flow context\nlet contextKeys = flow.keys();\n\nlet result = {};\n\n// Device yang diperbolehkan\nlet allowedDevices = {\n    \"Soil_Dry_1\": \"dry1\",\n    \"Soil_Dry_2\": \"dry2\",\n    \"Soil_Wet_1\": \"wet1\",\n    \"Soil_Wet_2\": \"wet2\"\n};\n\n// Loop semua data\nfor (let key of contextKeys) {\n\n    let value = flow.get(key);\n\n    // Cari device berdasarkan prefix\n    for (let device of Object.keys(allowedDevices)) {\n\n        let prefix = device + \"_\";\n\n        if (key.startsWith(prefix)) {\n\n            // Ambil nama parameter setelah nama device\n            let parameter = key.substring(prefix.length);\n\n            // Nama baru\n            let newKey = allowedDevices[device] + \"_\" + parameter;\n\n            result[newKey] = value;\n\n            break;\n        }\n    }\n}\n\n// Buat payload\nmsg.payload = {\n    timestamp: new Date().toISOString(),\n    data: result\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 320,
+        "y": 640,
+        "wires": [
+            [
+                "fc9f313e4d894e46",
+                "d1f04c44bddec686"
+            ]
+        ]
+    },
+    {
+        "id": "a88485815f6563dc",
+        "type": "inject",
+        "z": "14f2a19540a3c0f9",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "600",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 90,
+        "y": 640,
+        "wires": [
+            [
+                "d55b04aa9a26646d"
+            ]
+        ]
+    },
+    {
+        "id": "d1f04c44bddec686",
+        "type": "mqtt out",
+        "z": "14f2a19540a3c0f9",
+        "name": "",
+        "topic": "devices/389/telemetry",
+        "qos": "2",
+        "retain": "true",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "512d9527851bf091",
+        "x": 720,
+        "y": 780,
+        "wires": []
+    },
+    {
+        "id": "1af37f0f852dec1b",
+        "type": "mqtt-broker",
+        "name": "",
+        "broker": "0.0.0.0",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "2536076f79f0920d",
+        "type": "mqtt-broker",
+        "name": "MNI",
+        "broker": "mqtt.meteonusantara.com",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "512d9527851bf091",
+        "type": "mqtt-broker",
+        "name": "Agricarbon",
+        "broker": "mqtt.agricarbon-ai.com",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]
